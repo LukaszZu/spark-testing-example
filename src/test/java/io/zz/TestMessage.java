@@ -5,6 +5,9 @@
  */
 package io.zz;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  *
  * @author zulk
@@ -12,7 +15,25 @@ package io.zz;
 public class TestMessage {
     String name;
     String value;
+    List<InMessage> inMessage = new ArrayList<>();
 
+    public TestMessage() {
+    }
+
+    public List<InMessage> getInMessage() {
+        return inMessage;
+    }
+
+    public void setInMessage(List<InMessage> inMessage) {
+        this.inMessage = inMessage;
+    }
+
+    
+    public TestMessage addMessage(InMessage message) {
+        inMessage.add(message);
+        return this;
+    }
+    
     public TestMessage(String name, String value) {
         this.name = name;
         this.value = value;
@@ -32,6 +53,11 @@ public class TestMessage {
 
     public void setValue(String value) {
         this.value = value;
+    }
+
+    @Override
+    public String toString() {
+        return "TestMessage{" + "name=" + name + ", value=" + value + ", inMessage=" + inMessage + '}';
     }
     
 }
