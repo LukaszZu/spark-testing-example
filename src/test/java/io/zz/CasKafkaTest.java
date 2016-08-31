@@ -16,19 +16,30 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import kafka.serializer.StringDecoder;
+import org.apache.spark.Partition;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import static org.apache.spark.sql.functions.callUDF;
+import static org.apache.spark.sql.functions.col;
+import static org.apache.spark.sql.functions.explode;
+import static org.apache.spark.sql.functions.lit;
+import static org.apache.spark.sql.functions.split;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.streaming.Durations;
 import org.apache.spark.streaming.api.java.JavaPairInputDStream;
 import org.apache.spark.streaming.api.java.JavaStreamingContext;
@@ -36,6 +47,7 @@ import org.apache.spark.streaming.kafka.KafkaUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import scala.collection.mutable.WrappedArray;
 
 /**
  *
@@ -74,8 +86,8 @@ public class CasKafkaTest {
 
         KafkaProducer<String, String> kafkaProducer = new KafkaProducer<>(embeddedKafka
                 .producerConfig());
-        for (int i = 0; i < 10000; i++) {
-            TestMessage testMessage = new TestMessage("name", "value");
+        for (int i = 0; i < 100; i++) {
+            TestMessage testMessage = new TestMessage("name", "1,2,3,4,5,6,7,8");
             testMessage.addMessage(new InMessage("A"))
                     .addMessage(new InMessage("B"));
             kafkaProducer.send("test", TestMessage.class.getName(), mapper
@@ -85,6 +97,7 @@ public class CasKafkaTest {
         
         createDirectStream.foreachRDD(rdd -> rdd.foreachPartition(f -> {
             ArrayList<InMessage> arrayList = new ArrayList<>();
+            ArrayList<TestMessage> tm = new ArrayList<>();
             ObjectMapper om = new ObjectMapper();
 
             f.forEachRemaining(t -> {
@@ -93,6 +106,7 @@ public class CasKafkaTest {
                     TestMessage readValue = om
                             .readValue(t._2, TestMessage.class);
                     arrayList.addAll(readValue.getInMessage());
+                    tm.add(readValue);
                 } catch (IOException ex) {
                     Logger.getLogger(CasKafkaTest.class.getName())
                             .log(Level.SEVERE, null, ex);
@@ -102,10 +116,10 @@ public class CasKafkaTest {
                     .fromSparkContext(SparkContext.getOrCreate());
             LocalTime rdd1 = LocalTime.now();
             JavaRDD<InMessage> parallelize = lsc.parallelize(arrayList);
-            Map<String, Long> countRDD = parallelize.groupBy(fn -> fn.getName()).countByKey();
+            List<Partition> partitions = parallelize.groupBy(fn -> fn.getName()).partitions();
             LocalTime rdd2 = LocalTime.now();
             System.out
-                    .println("RDD: " + ChronoUnit.MILLIS.between(rdd1, rdd2) + " ->" + countRDD);
+                    .println("RDD: " + ChronoUnit.MILLIS.between(rdd1, rdd2) + " ->" + partitions.size());
 
             SparkSession ss = SparkSession.builder().getOrCreate();
             LocalTime df1 = LocalTime.now();
@@ -113,11 +127,23 @@ public class CasKafkaTest {
             Dataset<Row> countDF = ds.groupBy(ds.col("name")).count();
             LocalTime df2 = LocalTime.now();
             System.out.println("DF: " + ChronoUnit.MILLIS.between(df1, df2) + " ->" + countDF);
+            
+            Dataset<TestMessage> fds = ss.createDataset(tm, Encoders.bean(TestMessage.class));
+            fds.printSchema();
+            ss.udf().register("u_join", (WrappedArray s,String d) -> s.mkString(d),DataTypes.StringType);
+            fds.select(col("value"),explode(col("inMessage")).as("inMessage")).select("value","inMessage.name","inMessage.name2").show();
+            fds.select(col("name"),col("value"),callUDF("u_join",col("inMessage.name"),lit("-")).as("dupa3")).show();
+            fds.selectExpr("u_join(inMessage.name,'x') as dupa").show();
+            fds.select(col("name"),explode(split(col("value"), ","))).show();
+            
+            Column[] cols = Stream.of(fds.columns()).map(c -> col(c)).collect(Collectors.toList()).toArray(new Column[]{});
+            fds.select(cols).show();
+            
         }));
 
         jsc.start();
-        jsc.awaitTermination();
-//        jsc.awaitTerminationOrTimeout(5000);
+//        jsc.awaitTermination();
+        jsc.awaitTerminationOrTimeout(2000);
     }
 
     @After
