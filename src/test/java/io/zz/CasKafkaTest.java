@@ -32,6 +32,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Encoders;
+import static org.apache.spark.sql.Encoders.bean;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import static org.apache.spark.sql.functions.callUDF;
@@ -94,6 +95,19 @@ public class CasKafkaTest {
                     .writeValueAsString(testMessage));
         }
         
+
+        createDirectStream.print();
+        
+        
+        createDirectStream.transform((d,t) -> {
+            ObjectMapper om = new ObjectMapper();
+            
+            JavaRDD<TestMessage> map = d.map(tp -> om.readValue(tp._2,TestMessage.class));
+            map.foreach(f -> System.out.println(f));
+            System.out.println("---------------------------------------------------------");
+            Dataset<TestMessage> ds = SparkSession.builder().getOrCreate().createDataset(map.rdd(), bean(TestMessage.class));
+            return ds.toJavaRDD();
+        }).foreachRDD(f -> System.out.print(f));
         
         createDirectStream.foreachRDD(rdd -> rdd.foreachPartition(f -> {
             ArrayList<InMessage> arrayList = new ArrayList<>();
